@@ -20,32 +20,33 @@ fnorm <- function(A) sqrt(sum(A * A))
 
 ## Matrices (means)
 ## rank(X1) = 200 (full rank)
-X1 <- matrix(rnorm(M * N, 0, 1), nrow = M, ncol = N)
+X1 <- matrix(rnorm(M*N), M, N)
+X1 <- X1/fnorm(X1)
 
 ## rank(X2) = 0.5*M
-X2 <- matrix(rnorm(M * N, 0, 1), nrow = M, ncol = N)
+X2 <- matrix(rnorm(M*N, 0, 1), nrow = M, ncol = N)
 sv  <- svd(X2)
-idx <- round(0.5 * M)
+idx <- round(0.5*M)
 d2  <- sv$d
 if (idx + 1 <= length(d2)) d2[(idx + 1):length(d2)] <- 0
 X2  <- sv$u %*% diag(d2, nrow = length(d2), ncol = length(d2)) %*% t(sv$v)
+X2  <- X2/fnorm(X2)
 
 ## rank(X3) = 0.05*M
-X3 <- matrix(rnorm(M * N), M, N)
+X3 <- matrix(rnorm(M*N), M, N)
 sv  <- svd(X3, nu = K, nv = K)
 idx <- round(0.05 * M)
 d3  <- sv$d
 if (idx + 1 <= length(d3)) d3[(idx + 1):length(d3)] <- 0
 X3  <- sv$u %>% { . %*% diag(d3, length(d3), length(d3)) %*% t(sv$v) }  # no diag(.) piping
-# If you prefer no magrittr at all, use the next line instead of the one above:
-# X3 <- sv$u %*% diag(d3, length(d3), length(d3)) %*% t(sv$v)
-X3  <- X3 / fnorm(X3)
+X3  <- X3/fnorm(X3)
 
 ## X4: sigma_i = sqrt(M)/(1 + exp((i - M/2)/20)), i = 1..M
-X4 <- matrix(rnorm(M * N, 0, 1), nrow = M, ncol = N)
+X4 <- matrix(rnorm(M*N, 0, 1), nrow = M, ncol = N)
 sv  <- svd(X4)
 d4  <- sqrt(M) / (1 + exp(((1:M) - 0.5 * M) / 20))
 X4  <- sv$u %*% diag(d4, nrow = length(d4), ncol = length(d4)) %*% t(sv$v)
+X4  <- X4/fnorm(X4)
 
 ## Containers
 X0      <- list(X1, X2, X3, X4)
@@ -72,7 +73,7 @@ for (Ik in 1:4) {
       ## Monte Carlo samples
       cat("Running monte carlo method with lambda =", lam, "\n")
       for (Is in 1:Ns) {
-        Y <- X + tau_w[Ik, In] * matrix(rnorm(M * N), M, N)
+        Y <- X + tau_w[Ik, In]*matrix(rnorm(M*N), M, N)
         
         svy <- svd(Y, nu = K, nv = K)   # skinny SVD
         dth <- pmax(0, svy$d - lam)
@@ -90,8 +91,8 @@ for (Ik in 1:4) {
       ## Average Monte Carlo risk
       MCR[Il, In, Ik] <- MCR[Il, In, Ik] / Ns
       
-      ## One-shot SURE (fresh noise draw)
-      Y <- X + tau_w[Ik, In] * matrix(rnorm(M * N), M, N)
+      ## One-shot SURE (single noise draw)
+      Y <- X + tau_w[Ik, In]*matrix(rnorm(M*N), M, N)
       SURE[Il, In, Ik] <- sure_svt(lam, tau_w[Ik, In], Y)
     }
   }
@@ -120,7 +121,7 @@ for (In in 1:4) {
   
   par(pty = "s")
   plot(NA, xlim = c(0, xmax), ylim = c(-0.1 * ymax, 1.05 * ymax),
-       xlab = expression(lambda * tau), ylab = "MSE",
+       xlab = expression(lambda * tau), ylab = "Empirical Risk",
        main = paste0("SNR = ", SNR[In]),
        cex.lab = lfsz/12)
   
@@ -158,7 +159,7 @@ for (In in 1:4) {
   }
   
   plot(NA, xlim = c(0, xmax * 1.02), ylim = c(0, ymax * 1.05),
-       xlab = "rank(SVT(Y))", ylab = "MSE",
+       xlab = "rank(SVT(Y))", ylab = "Empirical Risk",
        main = paste0("SNR = ", SNR[In]))
   
   grid(); box()
@@ -175,9 +176,79 @@ for (In in 1:4) {
   legend("topleft",
          legend = c(expression(X[1]^{0}), expression(X[2]^{0}),
                     expression(X[3]^{0}), expression(X[4]^{0})),
-         col = cmap, lwd = 2, pch = 16, pt.cex = 0.9, bty = "n", cex = 0.9)
+         col = cmap, lwd = 2, pch = 3, pt.cex = 1.1, cex = legend_cex)
 }
 
 save(SURE, MCR, MCS, AVG_RANK, RANKS, SNR, Nl, lambda, tau_w,
      file = "data_sure_vs_montecarlo.RData")
 
+## ---------- RANK vs LAMBDA (SVT) ----------
+## Settings
+avg_over_samples <- FALSE   # TRUE to average ranks over many noise draws
+Ns_rank <- 30L              # only used if avg_over_samples = TRUE
+set.seed(4321)
+
+K <- min(M, N)
+RANK <- array(0.0, dim = c(Nl, 4L, 4L))  # [Il, In, Ik]
+
+for (Ik in 1:4) {
+  X <- X0[[Ik]]
+  for (In in 1:4) {
+    lam_vec <- lambda[[4 * (Ik - 1) + In]]
+    tau <- tau_w[Ik, In]
+    
+    if (!avg_over_samples) {
+      ## One fresh noisy draw; SVD once; ranks for all lambda by comparison
+      Y <- X + tau * matrix(rnorm(M * N), M, N)
+      svy <- svd(Y, nu = 0, nv = 0)  # only singular values needed
+      ## rank(SVT(Y; λ)) = # { d_i(Y) > λ }
+      RANK[, In, Ik] <- colSums(outer(svy$d, lam_vec, FUN = ">"))
+    } else {
+      ## Monte-Carlo average rank across Ns_rank draws
+      rsum <- rep(0.0, Nl)
+      for (Is in 1:Ns_rank) {
+        Y <- X + tau * matrix(rnorm(M * N), M, N)
+        d <- svd(Y, nu = 0, nv = 0)$d
+        rsum <- rsum + colSums(outer(d, lam_vec, FUN = ">"))
+      }
+      RANK[, In, Ik] <- rsum / Ns_rank
+    }
+  }
+}
+
+## ---------- Plot: rank vs (tau * lambda) ----------
+cmap <- grDevices::colorRampPalette(
+  c("#00007F","blue","#007FFF","cyan","#7FFF7F","yellow","#FF7F00","red","#7F0000")
+)(4)
+cmap[2] <- rgb(0, 1, 0.5)
+cmap[3] <- rgb(1, 0.5, 0)
+
+par(mfrow = c(2, 2))
+for (In in 1:4) {
+  ## x-limits mirror your error plots convention (tau * lambda on x-axis)
+  xmax <- 0
+  for (Ik in 1:4) {
+    lam_vec <- lambda[[4 * (Ik - 1) + In]]
+    xmax <- max(xmax, tau_w[Ik, In] * lam_vec)
+  }
+  
+  par(pty = "s")
+  plot(NA,
+       xlim = c(0, xmax),
+       ylim = c(0, K),
+       xlab = expression(lambda * tau),
+       ylab = "rank(SVT(Y))",
+       main = paste0("SNR = ", SNR[In]),
+       cex.lab = 1.2, cex.main = 1.2, cex.axis = 1.0)
+  grid(); box()
+  
+  for (Ik in 1:4) {
+    lam_vec <- lambda[[4 * (Ik - 1) + In]]
+    lines(tau_w[Ik, In] * lam_vec, RANK[, In, Ik], col = cmap[Ik], lwd = 2)
+  }
+  
+  legend("bottomleft",
+         legend = c(expression(X[1]^{0}), expression(X[2]^{0}),
+                    expression(X[3]^{0}), expression(X[4]^{0})),
+         col = cmap, lwd = 2, pch = 3, pt.cex = 1.1, cex = legend_cex)
+}
