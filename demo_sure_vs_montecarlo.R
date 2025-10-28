@@ -252,3 +252,63 @@ for (In in 1:4) {
                     expression(X[3]^{0}), expression(X[4]^{0})),
          col = cmap, lwd = 2, pch = 3, pt.cex = 1.1, cex = legend_cex)
 }
+
+## -------- Rank vs Degrees of Freedom (SURE sample) --------
+## For each example (Ik) and SNR (In), draw one noisy Y,
+## then sweep lambda, computing:  rank(SVT(Y; λ))  and  DoF(λ) = div_SVT(Y; λ).
+
+set.seed(2468)
+
+K <- min(M, N)
+RANK_vs_DOF <- array(0.0, dim = c(Nl, 4L, 4L))  # y: rank
+DOF          <- array(0.0, dim = c(Nl, 4L, 4L))  # x: degrees of freedom
+
+for (Ik in 1:4) {
+  X <- X0[[Ik]]
+  for (In in 1:4) {
+    tau    <- tau_w[Ik, In]
+    lamvec <- lambda[[4 * (Ik - 1) + In]]
+    
+    ## One SURE-style noisy draw (real-valued)
+    Y  <- X + tau * matrix(rnorm(M * N), M, N)
+    s  <- svd(Y, nu = 0, nv = 0)$d
+    
+    ## Sweep λ: rank is # { s_i > λ }; DoF is the SVT divergence
+    RANK_vs_DOF[, In, Ik] <- vapply(lamvec, function(lam) sum(s > lam), numeric(1))
+    DOF[, In, Ik]         <- vapply(lamvec, function(lam) sure_div_svt(lam, s, TRUE, c(M, N)),
+                                    numeric(1))
+  }
+}
+
+## -------- Plot: rank vs DoF (by SNR; colors = examples) --------
+op <- options(scipen = 999)   # strongly prefer plain numbers over sci. notation
+on.exit(options(op), add = TRUE)
+
+cmap <- grDevices::colorRampPalette(
+  c("#00007F","blue","#007FFF","cyan","#7FFF7F","yellow","#FF7F00","red","#7F0000")
+)(4)
+cmap[2] <- rgb(0, 1, 0.5)
+cmap[3] <- rgb(1, 0.5, 0)
+
+par(mfrow = c(2, 2), mar = c(4,4,2,1))
+for (In in 1:4) {
+  xmax <- 0
+  for (Ik in 1:4) xmax <- max(xmax, DOF[, In, Ik], na.rm = TRUE)
+  
+  plot(NA, xlim = c(0, xmax), ylim = c(0, K),
+       xlab = "degrees of freedom (divergence)", ylab = "rank(SVT output)",
+       main = paste0("SNR = ", SNR[In]),
+       cex.axis = 1.0, cex.lab = 1.2, cex.main = 1.2)
+  grid(); box()
+  
+  for (Ik in 1:4) {
+    lines(DOF[, In, Ik], RANK_vs_DOF[, In, Ik], col = cmap[Ik], lwd = 2)
+    points(DOF[, In, Ik], RANK_vs_DOF[, In, Ik], pch = 16, cex = 0.6, col = cmap[Ik])
+  }
+  
+  legend("bottomright",
+         legend = c(expression(X[1]^{0}), expression(X[2]^{0}),
+                    expression(X[3]^{0}), expression(X[4]^{0})),
+         col = cmap, lwd = 2, pch = 3, pt.cex = 1.1, cex = legend_cex)
+}
+
